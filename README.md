@@ -10,4 +10,4 @@
 ## 使用方法
 无需下载，直接运行：
 ```bash
-curl -L [https://raw.githubusercontent.com/brucelau1987cn/backtrace/main/backtrace.sh](https://raw.githubusercontent.com/brucelau1987cn/backtrace/main/backtrace.sh) | bash
+curl -L https://raw.githubusercontent.com/brucelau1987cn/backtrace/main/backtrace.sh | bash
