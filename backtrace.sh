@@ -11,6 +11,7 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
+DIM='\033[2m'
 NC='\033[0m'
 
 TRACE_TOOL=""
@@ -703,6 +704,79 @@ get_latency() {
     echo "$lat"
 }
 
+line_level() {
+    local line_type="$1"
+    case "$line_type" in
+        *"顶级"*) echo "顶级" ;;
+        *"优质"*) echo "优质" ;;
+        *"普通"*) echo "普通" ;;
+        *) echo "未知" ;;
+    esac
+}
+
+line_name() {
+    local line_type="$1"
+    echo "${line_type%% \[*}"
+}
+
+level_color() {
+    case "$1" in
+        顶级) echo "$GREEN" ;;
+        优质) echo "$YELLOW" ;;
+        普通) echo "$RED" ;;
+        *) echo "$WHITE" ;;
+    esac
+}
+
+level_icon() {
+    case "$1" in
+        顶级) echo "★" ;;
+        优质) echo "◆" ;;
+        普通) echo "△" ;;
+        *) echo "○" ;;
+    esac
+}
+
+format_latency() {
+    local latency="$1"
+
+    if [ "$latency" = "超时" ]; then
+        printf "%b%s%b" "$RED" "超时" "$NC"
+    else
+        printf "%b%s%b" "$CYAN" "$latency" "$NC"
+    fi
+}
+
+format_node_colored() {
+    local node="$1"
+    local ip tag color
+
+    if [ -z "$node" ] || [ "$node" = "*" ]; then
+        printf "%b%s%b" "$DIM" "*" "$NC"
+        return
+    fi
+
+    ip="${node%%[*}"
+    tag=""
+    if [[ "$node" == *"["*"]" ]]; then
+        tag="${node##*[}"
+        tag="${tag%]}"
+    fi
+
+    color="$(level_color "未知")"
+    case "$tag" in
+        CN2|9929|CUG|CMIN2) color="$GREEN" ;;
+        CTG|163|CMI) color="$YELLOW" ;;
+        4837|CMNET) color="$RED" ;;
+    esac
+
+    if [ -n "$tag" ]; then
+        printf "%b%s%b%b[%s]%b" "$DIM" "$ip" "$NC" "$color" "$tag" "$NC"
+    else
+        printf "%b%s%b" "$DIM" "$ip" "$NC"
+    fi
+}
+
 # ============================================================
 # 检测单个目标
 # ============================================================
@@ -732,16 +806,16 @@ check_target() {
     local latency_display="$latency"
     [ "$latency" != "超时" ] && latency_display="${latency}ms"
 
-    local color="${WHITE}"
-    local level_icon="○"
-    case "$line_type" in
-        *"顶级"*) color="${GREEN}"; level_icon="★" ;;
-        *"优质"*) color="${YELLOW}"; level_icon="◆" ;;
-        *"普通"*) color="${RED}"; level_icon="△" ;;
-    esac
+    local level line color icon latency_colored node_colored
+    level=$(line_level "$line_type")
+    line=$(line_name "$line_type")
+    color=$(level_color "$level")
+    icon=$(level_icon "$level")
+    latency_colored=$(format_latency "$latency_display")
+    node_colored=$(format_node_colored "$key_hops")
 
-    printf "  %-8s ${color}%-2s %-20s${NC}  %-9s  %s\n" \
-           "$name" "$level_icon" "$line_type" "$latency_display" "$key_hops"
+    printf "  %-8s %b%-2s %-7s%b  %b%-16s%b  %-18b  %b\n" \
+           "$name" "$color" "$icon" "$level" "$NC" "$color" "$line" "$NC" "$latency_colored" "$node_colored"
 }
 
 # ============================================================
@@ -824,10 +898,11 @@ show_menu() {
 # 快速检测
 # ============================================================
 quick_test() {
-    echo -e "\n${CYAN}回程路由检测${NC}  ${WHITE}${TRACE_TOOL}${NC}"
-    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────${NC}"
-    printf "  %-8s %-24s %-9s %s\n" "目标" "线路" "延迟" "判断节点"
-    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "\n${CYAN}╭──────────────────────────── 回程路由检测 ────────────────────────────╮${NC}"
+    printf "${CYAN}│${NC} 工具: ${WHITE}%-12s${NC} 并发: ${WHITE}%-2s${NC} 超时: ${WHITE}%-2ss${NC}                            ${CYAN}│${NC}\n" "$TRACE_TOOL" "$MAX_PARALLEL" "$TRACE_TIMEOUT"
+    echo -e "${CYAN}├──────────┬────────────┬──────────────────┬────────────────────┤${NC}"
+    printf "${CYAN}│${NC} %-8s ${CYAN}│${NC} %-10s ${CYAN}│${NC} %-16s ${CYAN}│${NC} %-18s ${CYAN}│${NC}\n" "目标" "等级" "线路" "判断节点"
+    echo -e "${CYAN}├──────────┼────────────┼──────────────────┼────────────────────┤${NC}"
 
     local tmpdir
     tmpdir=$(mktemp -d)
@@ -860,7 +935,7 @@ quick_test() {
         local city
         city=${key:0:2}
         if [ -n "$last_city" ] && [ "$city" != "$last_city" ]; then
-            echo -e "${CYAN}  ─────────────────────────────────────────────────────────────────────────${NC}"
+            echo -e "${CYAN}├──────────┼────────────┼──────────────────┼────────────────────┤${NC}"
         fi
         last_city="$city"
 
@@ -870,10 +945,9 @@ quick_test() {
 
     rm -rf "$tmpdir"
 
-    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "${CYAN}╰──────────┴────────────┴──────────────────┴────────────────────╯${NC}"
     echo ""
-    echo -e "  图例: ${GREEN}★ 顶级线路${NC}  ${YELLOW}◆ 优质线路${NC}  ${RED}△ 普通线路${NC}"
-    echo -e "  判断节点: 仅显示用于识别线路的关键节点"
+    echo -e "  ${GREEN}★ 顶级${NC}  ${YELLOW}◆ 优质${NC}  ${RED}△ 普通${NC}  ${WHITE}○ 未识别${NC}    ${DIM}灰色为节点 IP，彩色为线路标签${NC}"
     echo ""
 }
 
