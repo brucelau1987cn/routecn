@@ -875,6 +875,6 @@ main() {
     echo -e "${GREEN}[✓] 检测完成！${NC}"
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if ! (return 0 2>/dev/null); then
     main "$@"
 fi
