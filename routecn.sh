@@ -527,31 +527,38 @@ format_line_node() {
     local preferred_tags="$2"
     local fallback_ip=""
     local fallback_tag=""
+    local rule tag ip asn
+
+    declare -A first_ip_by_tag
 
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
 
-        local ip
         ip=$(echo "$line" | extract_ipv4)
         [[ -z "$ip" ]] && continue
         is_private_ip "$ip" && continue
 
-        local tag
         tag=$(identify_cn_tag "$ip")
 
         if [ -z "$tag" ]; then
-            local asn
             asn=$(echo "$line" | extract_asn)
             [ -n "$asn" ] && tag=$(identify_asn_tag "$asn")
         fi
 
         if is_line_tag "$tag"; then
             [ -z "$fallback_ip" ] && fallback_ip="$ip" && fallback_tag="$tag"
-            case " $preferred_tags " in
-                *" $tag "*) format_node "$ip" "$tag"; return ;;
-            esac
+            [ -z "${first_ip_by_tag[$tag]:-}" ] && first_ip_by_tag[$tag]="$ip"
         fi
     done <<< "$raw_data"
+
+    # 按线路优先级选节点，而不是按路由出现顺序。
+    # 例如 CUG+4837 同时出现时，应优先显示 CUG 判断节点。
+    for rule in $preferred_tags; do
+        if [ -n "${first_ip_by_tag[$rule]:-}" ]; then
+            format_node "${first_ip_by_tag[$rule]}" "$rule"
+            return
+        fi
+    done
 
     format_node "$fallback_ip" "$fallback_tag"
 }
