@@ -74,13 +74,13 @@ curl -fsSL https://raw.githubusercontent.com/brucelau1987cn/backtrace/main/backt
 | 联通 | 9929、CUG、4837 |
 | 移动 | CMIN2、CMI、CMNET |
 
-同时会展示：
+同时会展示用于识别线路的关键节点，例如：
 
 ```text
-国内口上一跳[运营商] -> 国内入口第一跳[线路]
+202.77.23.29[CUG]
 ```
 
-便于快速判断实际入口质量。
+便于快速判断实际线路类型。
 
 ## 🖥️ 系统支持
 
@@ -96,9 +96,9 @@ curl -fsSL https://raw.githubusercontent.com/brucelau1987cn/backtrace/main/backt
 ## 📌 示例输出
 
 ```text
-北京电信  CN2 GT    [优质线路]  延迟: 35.7ms  入口: 69.194.x.x[CTGNet] -> 59.43.x.x[CN2]
-上海电信  CN2 GIA   [顶级线路]  延迟: 28.0ms  入口: 69.194.x.x[CTGNet] -> 59.43.x.x[CN2]
-广州移动  移动CMIN2 [顶级线路]  延迟: 19.2ms  入口: 9.x.x.x -> 223.120.x.x[CMIN2]
+北京电信  ◆ CN2 GT [优质线路]      35.7ms    59.43.x.x[CN2]
+上海联通  ◆ 联通CUG [优质线路]     37.4ms    202.77.23.29[CUG]
+广州移动  ★ 移动CMIN2 [顶级线路]   19.2ms    223.120.x.x[CMIN2]
 ```
 
 ## ⚠️ 说明

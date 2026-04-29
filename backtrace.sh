@@ -450,7 +450,7 @@ identify_cn_tag() {
     [[ "$ip" =~ ^202\.97\. ]]                                                       && echo "163"    && return
     [[ "$ip" =~ ^218\.105\. || "$ip" =~ ^210\.51\. ]]                               && echo "9929"   && return
     [[ "$ip" =~ ^219\.158\. ]]                                                      && echo "4837"   && return
-    [[ "$ip" =~ ^209\.58\. || "$ip" =~ ^43\.252\. ]]                                && echo "CUG"    && return
+    [[ "$ip" =~ ^209\.58\. || "$ip" =~ ^43\.252\. || "$ip" =~ ^202\.77\.23\. ]]    && echo "CUG"    && return
     [[ "$ip" =~ ^223\.120\.(12[89]|1[3-9][0-9]|2[0-4][0-9]|25[0-5])\. ]]           && echo "CMIN2"  && return
     [[ "$ip" =~ ^223\.11[89]\. || "$ip" =~ ^223\.12[01]\. ]]                        && echo "CMI"    && return
     [[ "$ip" =~ ^221\.(17[6-9]|18[0-3])\. ]]                                       && echo "CMNET"  && return
@@ -481,6 +481,75 @@ identify_asn_tag() {
         echo "${OVERSEAS_ASN_MAP[$asn]}"
         return
     fi
+}
+
+is_line_tag() {
+    case "$1" in
+        CN2|163|9929|CUG|4837|CMIN2|CMI|CMNET) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+format_node() {
+    local ip="$1"
+    local tag="$2"
+
+    if [ -z "$ip" ]; then
+        echo "*"
+    elif [ -n "$tag" ]; then
+        echo "${ip}[${tag}]"
+    else
+        echo "$ip"
+    fi
+}
+
+format_line_node() {
+    local raw_data="$1"
+    local preferred_tags="$2"
+    local fallback_ip=""
+    local fallback_tag=""
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+
+        local ip
+        ip=$(echo "$line" | extract_ipv4)
+        [[ -z "$ip" ]] && continue
+        is_private_ip "$ip" && continue
+
+        local tag
+        tag=$(identify_cn_tag "$ip")
+
+        if [ -z "$tag" ]; then
+            local asn
+            asn=$(echo "$line" | extract_asn)
+            [ -n "$asn" ] && tag=$(identify_asn_tag "$asn")
+        fi
+
+        if is_line_tag "$tag"; then
+            [ -z "$fallback_ip" ] && fallback_ip="$ip" && fallback_tag="$tag"
+            case " $preferred_tags " in
+                *" $tag "*) format_node "$ip" "$tag"; return ;;
+            esac
+        fi
+    done <<< "$raw_data"
+
+    format_node "$fallback_ip" "$fallback_tag"
+}
+
+line_preferred_tags() {
+    local line_type="$1"
+    case "$line_type" in
+        *"CN2"*) echo "CN2" ;;
+        *"电信163"*) echo "163" ;;
+        *"9929"*) echo "9929" ;;
+        *"CUG"*) echo "CUG 4837" ;;
+        *"4837"*) echo "4837" ;;
+        *"CMIN2"*) echo "CMIN2" ;;
+        *"CMI"*) echo "CMI" ;;
+        *"CMNET"*) echo "CMNET" ;;
+        *) echo "CN2 163 9929 CUG 4837 CMIN2 CMI CMNET" ;;
+    esac
 }
 
 # ============================================================
@@ -522,25 +591,25 @@ analyze_line_type() {
     "电信")
         if echo "$raw_data" | grep -qE "AS4809|59\.43\."; then
             if echo "$raw_data" | grep -qE "AS4134|202\.97\."; then
-                result="CN2 GT    [优质线路]"
+                result="CN2 GT [优质线路]"
             else
-                result="CN2 GIA   [顶级线路]"
+                result="CN2 GIA [顶级线路]"
             fi
         elif echo "$raw_data" | grep -qE "AS4134|202\.97\."; then
-            result="电信163   [优化线路]"
+            result="电信163 [优质线路]"
         fi
         ;;
     "联通")
         if echo "$raw_data" | grep -qE "AS9929|218\.105\.|210\.51\."; then
-            result="联通9929  [顶级线路]"
-        elif echo "$raw_data" | grep -qE "AS10099|209\.58\.|43\.252\."; then
+            result="联通9929 [顶级线路]"
+        elif echo "$raw_data" | grep -qE "AS10099|209\.58\.|43\.252\.|202\.77\.23\."; then
             if echo "$raw_data" | grep -qE "AS4837|219\.158\."; then
-                result="CUG+4837  [优质线路]"
+                result="CUG+4837 [优质线路]"
             else
-                result="联通CUG   [顶级线路]"
+                result="联通CUG [优质线路]"
             fi
         elif echo "$raw_data" | grep -qE "AS4837|219\.158\."; then
-            result="联通4837  [普通线路]"
+            result="联通4837 [普通线路]"
         elif echo "$raw_data" | grep -qE "AS4809|59\.43\."; then
             result="CN2转联通 [优质线路]"
         fi
@@ -549,7 +618,7 @@ analyze_line_type() {
         if echo "$raw_data" | grep -qE "AS58807|223\.120\.(12[89]|1[3-9][0-9]|2[0-4][0-9]|25[0-5])\."; then
             result="移动CMIN2 [顶级线路]"
         elif echo "$raw_data" | grep -qE "AS58453|223\.11[89]\.|223\.12[01]\."; then
-            result="移动CMI   [优质线路]"
+            result="移动CMI [优质线路]"
         elif echo "$raw_data" | grep -qE "AS9808|221\.(17[6-9]|18[0-3])\."; then
             result="移动CMNET [普通线路]"
         elif echo "$raw_data" | grep -qE "AS4809|59\.43\."; then
@@ -562,83 +631,15 @@ analyze_line_type() {
 }
 
 # ============================================================
-# 提取关键节点: 国内口上一跳[运营商] -> 国内入口第一跳[线路]
+# 提取判断线路的关键节点
 # ============================================================
 extract_key_hops() {
     local raw_data="$1"
-    local prev_public_ip=""
-    local prev_public_tag=""
-    local pre_cn_ip=""
-    local pre_cn_tag=""
-    local first_cn_ip=""
-    local first_cn_tag=""
-    local found_cn=0
+    local line_type="$2"
+    local preferred_tags
+    preferred_tags=$(line_preferred_tags "$line_type")
 
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-
-        local ip
-        ip=$(echo "$line" | extract_ipv4)
-        [[ -z "$ip" ]] && continue
-        is_private_ip "$ip" && continue
-
-        # 尝试识别国内标签
-        local cn_tag
-        cn_tag=$(identify_cn_tag "$ip")
-
-        # 没从 IP 识别出来, 再从 ASN 补充
-        if [ -z "$cn_tag" ]; then
-            local asn
-            asn=$(echo "$line" | extract_asn)
-            if [ -n "$asn" ]; then
-                local asn_tag
-                asn_tag=$(identify_asn_tag "$asn")
-                # 只有国内标签才算国内节点
-                case "$asn_tag" in
-                    CN2|163|9929|CUG|4837|CMIN2|CMI|CMNET)
-                        cn_tag="$asn_tag"
-                        ;;
-                esac
-            fi
-        fi
-
-        if [ -n "$cn_tag" ] || is_cn_ip "$ip"; then
-            # === 国内入口第一跳 ===
-            if [ $found_cn -eq 0 ]; then
-                pre_cn_ip="$prev_public_ip"
-                pre_cn_tag="$prev_public_tag"
-                first_cn_ip="$ip"
-                first_cn_tag="${cn_tag:-CN}"
-                found_cn=1
-            fi
-        else
-            # === 国内口上一跳：第一个国内节点之前的最后一个公网节点 ===
-            if [ $found_cn -eq 0 ]; then
-                prev_public_ip="$ip"
-                local o_tag
-                o_tag=$(get_overseas_tag "$ip" "$line")
-                prev_public_tag="$o_tag"
-            fi
-        fi
-    done <<< "$raw_data"
-
-    # 组合输出
-    local pre_cn_str="*"
-    local cn_str="*"
-
-    if [ -n "$pre_cn_ip" ]; then
-        if [ -n "$pre_cn_tag" ]; then
-            pre_cn_str="${pre_cn_ip}[${pre_cn_tag}]"
-        else
-            pre_cn_str="${pre_cn_ip}"
-        fi
-    fi
-
-    if [ -n "$first_cn_ip" ]; then
-        cn_str="${first_cn_ip}[${first_cn_tag}]"
-    fi
-
-    echo "${pre_cn_str} -> ${cn_str}"
+    format_line_node "$raw_data" "$preferred_tags"
 }
 
 # ============================================================
@@ -680,7 +681,7 @@ check_target() {
     line_type=$(analyze_line_type "$raw_data" "$isp_type")
 
     local key_hops
-    key_hops=$(extract_key_hops "$raw_data")
+    key_hops=$(extract_key_hops "$raw_data" "$line_type")
 
     local latency
     latency=$(get_latency "$ip")
@@ -688,14 +689,15 @@ check_target() {
     [ "$latency" != "超时" ] && latency_display="${latency}ms"
 
     local color="${WHITE}"
+    local level_icon="○"
     case "$line_type" in
-        *"顶级"*) color="${GREEN}" ;;
-        *"优质"*) color="${YELLOW}" ;;
-        *"普通"*) color="${RED}" ;;
+        *"顶级"*) color="${GREEN}"; level_icon="★" ;;
+        *"优质"*) color="${YELLOW}"; level_icon="◆" ;;
+        *"普通"*) color="${RED}"; level_icon="△" ;;
     esac
 
-    printf "  %-10s ${color}%-22s${NC}  延迟: %-10s  入口: %s\n" \
-           "$name" "$line_type" "$latency_display" "$key_hops"
+    printf "  %-8s ${color}%-2s %-20s${NC}  %-9s  %s\n" \
+           "$name" "$level_icon" "$line_type" "$latency_display" "$key_hops"
 }
 
 # ============================================================
@@ -778,8 +780,10 @@ show_menu() {
 # 快速检测
 # ============================================================
 quick_test() {
-    echo -e "\n${CYAN}[开始回程路由检测] (工具: ${TRACE_TOOL})${NC}"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "\n${CYAN}回程路由检测${NC}  ${WHITE}${TRACE_TOOL}${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────${NC}"
+    printf "  %-8s %-24s %-9s %s\n" "目标" "线路" "延迟" "判断节点"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────${NC}"
 
     local last_city=""
 
@@ -787,21 +791,17 @@ quick_test() {
         local city
         city=${key:0:2}
         if [ -n "$last_city" ] && [ "$city" != "$last_city" ]; then
-            echo -e "${CYAN}  ──────────────────────────────────────────────────────────────────────────────────────────${NC}"
+            echo -e "${CYAN}  ─────────────────────────────────────────────────────────────────────────${NC}"
         fi
         last_city="$city"
 
         check_target "$key" "${TARGETS[$key]}"
     done
 
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────${NC}"
     echo ""
-    echo -e "  线路等级:"
-    echo -e "    电信: ${GREEN}CN2 GIA [顶级]${NC} > ${YELLOW}CN2 GT / 电信163 [优化]${NC} > ${RED}电信163 [普通]${NC}"
-    echo -e "    联通: ${GREEN}9929/CUG [顶级]${NC} > ${YELLOW}CUG+4837 [优质]${NC} > ${RED}4837 [普通]${NC}"
-    echo -e "    移动: ${GREEN}CMIN2 [顶级]${NC} > ${YELLOW}CMI [优质]${NC} > ${RED}CMNET [普通]${NC}"
-    echo ""
-    echo -e "  入口格式: 国内口上一跳[运营商] -> 国内入口第一跳[线路]"
+    echo -e "  图例: ${GREEN}★ 顶级线路${NC}  ${YELLOW}◆ 优质线路${NC}  ${RED}△ 普通线路${NC}"
+    echo -e "  判断节点: 仅显示用于识别线路的关键节点"
     echo ""
 }
 
