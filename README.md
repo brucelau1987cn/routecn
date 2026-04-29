@@ -20,7 +20,7 @@ RouteCN 用来快速判断 VPS 回国三网线路质量。
 ## 🚀 使用
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/brucelau1987cn/backtrace/main/backtrace.sh | bash
+curl -fsSL https://raw.githubusercontent.com/brucelau1987cn/routecn/main/routecn.sh | bash
 ```
 
 脚本默认执行快速检测，不需要选择模式。
