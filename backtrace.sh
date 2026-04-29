@@ -119,6 +119,41 @@ OVERSEAS_ASN_MAP=(
     [4809]="CN2"
 )
 
+
+# ============================================================
+# 线路识别规则库 (更新 ASN / IP 段优先改这里)
+# ============================================================
+LINE_TAGS="CN2 163 9929 CUG 4837 CMIN2 CMI CMNET"
+
+declare -A LINE_ASN_MAP
+LINE_ASN_MAP=(
+    # 电信
+    [4809]="CN2"
+    [4134]="163"
+    # 联通
+    [9929]="9929"
+    [10099]="CUG"
+    [4837]="4837"
+    # 移动
+    [58807]="CMIN2"
+    [58453]="CMI"
+    [9808]="CMNET"
+)
+
+LINE_IP_RULES=(
+    # 电信
+    "CN2|^59\\.43\\."
+    "163|^202\\.97\\."
+    # 联通
+    "9929|^218\\.105\\.|^210\\.51\\."
+    "CUG|^209\\.58\\.|^43\\.252\\.|^202\\.77\\.23\\."
+    "4837|^219\\.158\\."
+    # 移动
+    "CMIN2|^223\\.120\\.(12[89]|1[3-9][0-9]|2[0-4][0-9]|25[0-5])\\."
+    "CMI|^223\\.11[89]\\.|^223\\.12[01]\\."
+    "CMNET|^221\\.(17[6-9]|18[0-3])\\."
+)
+
 # ============================================================
 # 海外运营商 IP 段识别 (常见骨干网 IP 段)
 # ============================================================
@@ -176,16 +211,7 @@ identify_overseas_ip() {
 # ============================================================
 is_cn_ip() {
     local ip="$1"
-    [[ "$ip" =~ ^59\.43\. ]]       && return 0
-    [[ "$ip" =~ ^202\.97\. ]]      && return 0
-    [[ "$ip" =~ ^218\.105\. ]]     && return 0
-    [[ "$ip" =~ ^210\.51\. ]]      && return 0
-    [[ "$ip" =~ ^219\.158\. ]]     && return 0
-    [[ "$ip" =~ ^223\.120\. ]]     && return 0
-    [[ "$ip" =~ ^223\.11[89]\. ]]  && return 0
-    [[ "$ip" =~ ^223\.121\. ]]     && return 0
-    [[ "$ip" =~ ^221\.(17[6-9]|18[0-3])\. ]] && return 0
-    return 1
+    identify_cn_tag "$ip" >/dev/null
 }
 
 is_private_ip() {
@@ -444,16 +470,17 @@ get_trace_data() {
 # ============================================================
 identify_cn_tag() {
     local ip="$1"
+    local rule tag regex
     is_private_ip "$ip" && return
 
-    [[ "$ip" =~ ^59\.43\. ]]                                                        && echo "CN2"    && return
-    [[ "$ip" =~ ^202\.97\. ]]                                                       && echo "163"    && return
-    [[ "$ip" =~ ^218\.105\. || "$ip" =~ ^210\.51\. ]]                               && echo "9929"   && return
-    [[ "$ip" =~ ^219\.158\. ]]                                                      && echo "4837"   && return
-    [[ "$ip" =~ ^209\.58\. || "$ip" =~ ^43\.252\. || "$ip" =~ ^202\.77\.23\. ]]    && echo "CUG"    && return
-    [[ "$ip" =~ ^223\.120\.(12[89]|1[3-9][0-9]|2[0-4][0-9]|25[0-5])\. ]]           && echo "CMIN2"  && return
-    [[ "$ip" =~ ^223\.11[89]\. || "$ip" =~ ^223\.12[01]\. ]]                        && echo "CMI"    && return
-    [[ "$ip" =~ ^221\.(17[6-9]|18[0-3])\. ]]                                       && echo "CMNET"  && return
+    for rule in "${LINE_IP_RULES[@]}"; do
+        tag="${rule%%|*}"
+        regex="${rule#*|}"
+        if [[ "$ip" =~ $regex ]]; then
+            echo "$tag"
+            return
+        fi
+    done
 }
 
 # ============================================================
@@ -465,16 +492,10 @@ identify_asn_tag() {
     asn="${asn#as}"
 
     # 国内 ASN
-    case "$asn" in
-        4809)  echo "CN2"   ; return ;;
-        4134)  echo "163"   ; return ;;
-        9929)  echo "9929"  ; return ;;
-        10099) echo "CUG"   ; return ;;
-        4837)  echo "4837"  ; return ;;
-        58807) echo "CMIN2" ; return ;;
-        58453) echo "CMI"   ; return ;;
-        9808)  echo "CMNET" ; return ;;
-    esac
+    if [ -n "${LINE_ASN_MAP[$asn]}" ]; then
+        echo "${LINE_ASN_MAP[$asn]}"
+        return
+    fi
 
     # 海外 ASN
     if [ -n "${OVERSEAS_ASN_MAP[$asn]}" ]; then
@@ -484,8 +505,8 @@ identify_asn_tag() {
 }
 
 is_line_tag() {
-    case "$1" in
-        CN2|163|9929|CUG|4837|CMIN2|CMI|CMNET) return 0 ;;
+    case " $LINE_TAGS " in
+        *" $1 "*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -579,6 +600,29 @@ get_overseas_tag() {
     fi
 }
 
+
+trace_has_tag() {
+    local raw_data="$1"
+    local target_tag="$2"
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+
+        local ip tag asn
+        ip=$(echo "$line" | extract_ipv4)
+        [ -n "$ip" ] && tag=$(identify_cn_tag "$ip")
+
+        if [ -z "$tag" ]; then
+            asn=$(echo "$line" | extract_asn)
+            [ -n "$asn" ] && tag=$(identify_asn_tag "$asn")
+        fi
+
+        [ "$tag" = "$target_tag" ] && return 0
+    done <<< "$raw_data"
+
+    return 1
+}
+
 # ============================================================
 # 分析线路类型
 # ============================================================
@@ -589,39 +633,39 @@ analyze_line_type() {
 
     case "$isp_type" in
     "电信")
-        if echo "$raw_data" | grep -qE "AS4809|59\.43\."; then
-            if echo "$raw_data" | grep -qE "AS4134|202\.97\."; then
+        if trace_has_tag "$raw_data" "CN2"; then
+            if trace_has_tag "$raw_data" "163"; then
                 result="CN2 GT [优质线路]"
             else
                 result="CN2 GIA [顶级线路]"
             fi
-        elif echo "$raw_data" | grep -qE "AS4134|202\.97\."; then
+        elif trace_has_tag "$raw_data" "163"; then
             result="电信163 [优质线路]"
         fi
         ;;
     "联通")
-        if echo "$raw_data" | grep -qE "AS9929|218\.105\.|210\.51\."; then
+        if trace_has_tag "$raw_data" "9929"; then
             result="联通9929 [顶级线路]"
-        elif echo "$raw_data" | grep -qE "AS10099|209\.58\.|43\.252\.|202\.77\.23\."; then
-            if echo "$raw_data" | grep -qE "AS4837|219\.158\."; then
+        elif trace_has_tag "$raw_data" "CUG"; then
+            if trace_has_tag "$raw_data" "4837"; then
                 result="CUG+4837 [优质线路]"
             else
                 result="联通CUG [优质线路]"
             fi
-        elif echo "$raw_data" | grep -qE "AS4837|219\.158\."; then
+        elif trace_has_tag "$raw_data" "4837"; then
             result="联通4837 [普通线路]"
-        elif echo "$raw_data" | grep -qE "AS4809|59\.43\."; then
+        elif trace_has_tag "$raw_data" "CN2"; then
             result="CN2转联通 [优质线路]"
         fi
         ;;
     "移动")
-        if echo "$raw_data" | grep -qE "AS58807|223\.120\.(12[89]|1[3-9][0-9]|2[0-4][0-9]|25[0-5])\."; then
+        if trace_has_tag "$raw_data" "CMIN2"; then
             result="移动CMIN2 [顶级线路]"
-        elif echo "$raw_data" | grep -qE "AS58453|223\.11[89]\.|223\.12[01]\."; then
+        elif trace_has_tag "$raw_data" "CMI"; then
             result="移动CMI [优质线路]"
-        elif echo "$raw_data" | grep -qE "AS9808|221\.(17[6-9]|18[0-3])\."; then
+        elif trace_has_tag "$raw_data" "CMNET"; then
             result="移动CMNET [普通线路]"
-        elif echo "$raw_data" | grep -qE "AS4809|59\.43\."; then
+        elif trace_has_tag "$raw_data" "CN2"; then
             result="CN2转移动 [优质线路]"
         fi
         ;;

@@ -74,6 +74,13 @@ curl -fsSL https://raw.githubusercontent.com/brucelau1987cn/backtrace/main/backt
 | 联通 | 9929、CUG、4837 |
 | 移动 | CMIN2、CMI、CMNET |
 
+线路识别规则集中维护在脚本顶部的规则库中：
+
+- `LINE_ASN_MAP`：ASN → 线路标签
+- `LINE_IP_RULES`：IP 段正则 → 线路标签
+
+需要新增线路类型、ASN 或 IP 段时，优先更新这两处规则。
+
 同时会展示用于识别线路的关键节点，例如：
 
 ```text
