@@ -15,9 +15,23 @@ NC='\033[0m'
 
 TRACE_TOOL=""
 PKG_INSTALL=""
+MAX_PARALLEL=9
+PING_COUNT=1
+TRACE_TIMEOUT=12
 
 has_cmd() {
     command -v "$1" >/dev/null 2>&1
+}
+
+run_with_timeout() {
+    local seconds="$1"
+    shift
+
+    if has_cmd timeout; then
+        timeout "$seconds" "$@"
+    else
+        "$@"
+    fi
 }
 
 extract_ipv4() {
@@ -361,13 +375,14 @@ install_dependencies() {
 
     echo -e "${YELLOW}[*] 选择路由追踪工具...${NC}"
 
-    # 默认优先使用系统自带/已安装工具，避免 nexttrace API 限制。
-    if has_cmd tracepath; then
+    # 默认优先使用系统已有工具，避免 nexttrace API 限制。
+    # traceroute 通常比 tracepath 更快；没有 traceroute 时再用 tracepath 兜底。
+    if has_cmd traceroute; then
+        TRACE_TOOL="traceroute"
+        echo -e "${GREEN}[✓] 使用 traceroute (无需 API)${NC}"
+    elif has_cmd tracepath; then
         TRACE_TOOL="tracepath"
         echo -e "${GREEN}[✓] 使用 tracepath (无需安装 / 无 API 限制)${NC}"
-    elif has_cmd traceroute; then
-        TRACE_TOOL="traceroute"
-        echo -e "${GREEN}[✓] 使用 traceroute${NC}"
     elif has_cmd mtr; then
         TRACE_TOOL="mtr"
         echo -e "${GREEN}[✓] 使用 mtr${NC}"
@@ -426,22 +441,22 @@ get_trace_data() {
     local ip="$1"
     case "$TRACE_TOOL" in
         nexttrace)
-            nexttrace -q 1 -n "$ip" 2>/dev/null
+            run_with_timeout "$TRACE_TIMEOUT" nexttrace -q 1 -n "$ip" 2>/dev/null
             ;;
         besttrace)
-            besttrace -q 1 -g cn "$ip" 2>/dev/null
+            run_with_timeout "$TRACE_TIMEOUT" besttrace -q 1 -g cn "$ip" 2>/dev/null
             ;;
         mtr)
-            mtr -z -r -n -c 1 "$ip" 2>/dev/null
+            run_with_timeout "$TRACE_TIMEOUT" mtr -z -r -n -c 1 "$ip" 2>/dev/null
             ;;
         tracepath)
-            tracepath -n -m 20 "$ip" 2>/dev/null
+            run_with_timeout "$TRACE_TIMEOUT" tracepath -n -m 20 "$ip" 2>/dev/null
             ;;
         traceroute)
             if traceroute --help 2>&1 | grep -q '\-A'; then
-                traceroute -A -n -q 1 -m 30 -w 2 "$ip" 2>/dev/null
+                run_with_timeout "$TRACE_TIMEOUT" traceroute -A -n -q 1 -m 20 -w 1 "$ip" 2>/dev/null
             else
-                traceroute -n -q 1 -m 30 -w 2 "$ip" 2>/dev/null
+                run_with_timeout "$TRACE_TIMEOUT" traceroute -n -q 1 -m 20 -w 1 "$ip" 2>/dev/null
             fi
             ;;
     esac
@@ -683,7 +698,7 @@ get_latency() {
         return
     fi
 
-    lat=$(ping -c 3 -W 3 "$ip" 2>/dev/null | awk -F'/' '/^rtt|^round-trip/ {printf "%.1f", $5}')
+    lat=$(ping -c "$PING_COUNT" -W 1 "$ip" 2>/dev/null | awk -F'/' '/^rtt|^round-trip/ {printf "%.1f", $5}')
     [ -z "$lat" ] && lat="超时"
     echo "$lat"
 }
@@ -814,8 +829,33 @@ quick_test() {
     printf "  %-8s %-24s %-9s %s\n" "目标" "线路" "延迟" "判断节点"
     echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────${NC}"
 
-    local last_city=""
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local pids=()
+    local running=0
+    local idx=0
 
+    for key in "${ORDERED_KEYS[@]}"; do
+        (
+            check_target "$key" "${TARGETS[$key]}" > "${tmpdir}/${idx}.out"
+        ) &
+        pids+=("$!")
+        ((idx++))
+        ((running++))
+
+        if [ "$running" -ge "$MAX_PARALLEL" ]; then
+            wait "${pids[0]}" 2>/dev/null || true
+            pids=("${pids[@]:1}")
+            ((running--))
+        fi
+    done
+
+    for pid in "${pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+
+    local last_city=""
+    local i=0
     for key in "${ORDERED_KEYS[@]}"; do
         local city
         city=${key:0:2}
@@ -824,8 +864,11 @@ quick_test() {
         fi
         last_city="$city"
 
-        check_target "$key" "${TARGETS[$key]}"
+        cat "${tmpdir}/${i}.out" 2>/dev/null || true
+        ((i++))
     done
+
+    rm -rf "$tmpdir"
 
     echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────${NC}"
     echo ""

@@ -57,13 +57,13 @@ curl -fsSL https://raw.githubusercontent.com/brucelau1987cn/backtrace/main/backt
 
 脚本会自动选择可用的路由追踪工具：
 
-1. `tracepath`：无需安装概率最高、无 API 限制、无需 root
-2. `traceroute`
+1. `traceroute`：无需 API，快速检测优先使用
+2. `tracepath`：无需安装概率高、无 API 限制、无需 root，作为兜底
 3. `mtr`
 4. `nexttrace`：仅作为已安装时的备用方案
 5. `besttrace`：仅作为已安装时的备用方案
 
-默认优先使用系统已有工具，不再自动安装 NextTrace，避免 API 访问限制。
+默认优先使用系统已有工具，不再自动安装 NextTrace，避免 API 访问限制。快速检测会并发检测多个目标，减少等待时间。
 
 ## 🧠 识别能力
 
