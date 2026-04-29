@@ -777,10 +777,7 @@ format_node_colored() {
     fi
 }
 
-# ============================================================
-# 检测单个目标
-# ============================================================
-check_target() {
+format_target_line() {
     local name="$1"
     local host="$2"
 
@@ -814,8 +811,17 @@ check_target() {
     latency_colored=$(format_latency "$latency_display")
     node_colored=$(format_node_colored "$key_hops")
 
-    printf "  %-8s %b%-2s %-7s%b  %b%-16s%b  %-18b  %b\n" \
-           "$name" "$color" "$icon" "$level" "$NC" "$color" "$line" "$NC" "$latency_colored" "$node_colored"
+    printf "    %-4s %-8b  %-18b  %-10b  %b\n" \
+           "$name" "${color}${icon} ${level}${NC}" "${color}${line}${NC}" "$latency_colored" "$node_colored"
+}
+
+# ============================================================
+# 检测单个目标
+# ============================================================
+check_target() {
+    local name="$1"
+    local host="$2"
+    format_target_line "$name" "$host"
 }
 
 # ============================================================
@@ -898,11 +904,8 @@ show_menu() {
 # 快速检测
 # ============================================================
 quick_test() {
-    echo -e "\n${CYAN}╭──────────────────────────── 回程路由检测 ────────────────────────────╮${NC}"
-    printf "${CYAN}│${NC} 工具: ${WHITE}%-12s${NC} 并发: ${WHITE}%-2s${NC} 超时: ${WHITE}%-2ss${NC}                            ${CYAN}│${NC}\n" "$TRACE_TOOL" "$MAX_PARALLEL" "$TRACE_TIMEOUT"
-    echo -e "${CYAN}├──────────┬────────────┬──────────────────┬────────────────────┤${NC}"
-    printf "${CYAN}│${NC} %-8s ${CYAN}│${NC} %-10s ${CYAN}│${NC} %-16s ${CYAN}│${NC} %-18s ${CYAN}│${NC}\n" "目标" "等级" "线路" "判断节点"
-    echo -e "${CYAN}├──────────┼────────────┼──────────────────┼────────────────────┤${NC}"
+    echo -e "\n${WHITE}回程路由检测${NC} ${DIM}(${TRACE_TOOL}, 并发 ${MAX_PARALLEL}, 超时 ${TRACE_TIMEOUT}s)${NC}"
+    echo -e "${DIM}────────────────────────────────────────────────────────${NC}"
 
     local tmpdir
     tmpdir=$(mktemp -d)
@@ -929,15 +932,16 @@ quick_test() {
         wait "$pid" 2>/dev/null || true
     done
 
-    local last_city=""
+    local current_city=""
     local i=0
     for key in "${ORDERED_KEYS[@]}"; do
         local city
         city=${key:0:2}
-        if [ -n "$last_city" ] && [ "$city" != "$last_city" ]; then
-            echo -e "${CYAN}├──────────┼────────────┼──────────────────┼────────────────────┤${NC}"
+        if [ "$city" != "$current_city" ]; then
+            [ -n "$current_city" ] && echo ""
+            echo -e "${CYAN}${city}${NC}"
+            current_city="$city"
         fi
-        last_city="$city"
 
         cat "${tmpdir}/${i}.out" 2>/dev/null || true
         ((i++))
@@ -945,9 +949,9 @@ quick_test() {
 
     rm -rf "$tmpdir"
 
-    echo -e "${CYAN}╰──────────┴────────────┴──────────────────┴────────────────────╯${NC}"
     echo ""
-    echo -e "  ${GREEN}★ 顶级${NC}  ${YELLOW}◆ 优质${NC}  ${RED}△ 普通${NC}  ${WHITE}○ 未识别${NC}    ${DIM}灰色为节点 IP，彩色为线路标签${NC}"
+    echo -e "${DIM}────────────────────────────────────────────────────────${NC}"
+    echo -e "${GREEN}★ 顶级${NC}  ${YELLOW}◆ 优质${NC}  ${RED}△ 普通${NC}  ${WHITE}○ 未识别${NC}    ${DIM}格式: 目标 / 等级 / 线路 / 延迟 / 判断节点${NC}"
     echo ""
 }
 
@@ -1007,15 +1011,7 @@ main() {
 
     print_banner
     install_dependencies
-    show_menu
-
-    case "$choice" in
-        1) quick_test ;;
-        2) detailed_test ;;
-        3) single_test ;;
-        0) echo "退出"; exit 0 ;;
-        *) echo -e "${RED}无效选项, 执行快速检测${NC}"; quick_test ;;
-    esac
+    quick_test
 
     echo -e "${GREEN}[✓] 检测完成！${NC}"
 }
